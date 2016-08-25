@@ -1,0 +1,26 @@
+#!/bin/sh
+
+/root/irqb_run.sh
+
+#################################
+# SET ADDITIONAL KERNEL PARAMS  #
+#################################
+
+/bin/touch /var/lock/subsys/local
+for proxy_ndp in /proc/sys/net/ipv6/conf/eth*/proxy_ndp; do echo 1 > "$proxy_ndp"; done
+
+
+#################################
+# LOAD NECESSARY KERNEL MODULES #
+#################################
+for module in xt_helper xt_conntrack xt_TCPMSS xt_state xt_length xt_tcpmss xt_limit xt_mark xt_MARK xt_recent xt_connlimit xt_string ipt_MASQUERADE ipt_REDIRECT ipt_LOG iptable_filter iptable_nat iptable_mangle ipt_REJECT ip6table_filter ip6t_LOG ip6table_mangle ip6t_REJECT nf_nat_ftp nf_conntrack_ipv6 ppp_generic ppp_async ppp_deflate ppp_mppe tun fuse ip_gre af_key esp4 esp6 xfrm4_mode_tunnel xfrm6_mode_tunnel vzcpt vzrst; do
+        /sbin/modprobe "$module"
+done
+
+ip link set br0 address 18:A9:05:76:CF:B4
+
+iptables -A FORWARD -i br0 -o venet0 -j ACCEPT
+iptables -A FORWARD -i venet0 -o br0 -j ACCEPT
+iptables -A FORWARD -j DROP
+
+/etc/init.d/vz start

@@ -1,0 +1,97 @@
+#!/bin/bash -e
+
+portal="10.144.244.2"
+domain="iqn.2015-01.ws.fuslvz"
+
+[ -f /etc/vz/vz.conf ] || exit 1
+[ -f "${VE_CONFFILE}" ] || exit 1
+. /etc/vz/vz.conf
+. "${VE_CONFFILE}"
+
+echo "iSCSI discovery on ${portal} ..."
+if ! iscsiadm -m discovery -t st -p "${portal}" > /dev/null; then
+	echo "Failed on iSCSI discovery"
+	exit 1
+fi
+
+echo "iSCSI login on ${portal} ..."
+if ! iscsiadm -m node -T "${domain}:ovz_${VEID}" -p "${portal}" --login; then
+	echo "Failed on iSCSI login"
+	exit 2
+fi
+
+echo -n "Waiting for iSCSI device to appear ..."
+
+for i in $(seq 400); do
+	if test -b "/dev/disk/by-path/ip-${portal}:3260-iscsi-${domain}:ovz_${VEID}-lun-0"; then
+		break
+	fi
+	echo -n .
+	sleep 0.05
+done
+echo
+
+if ! test -b "/dev/disk/by-path/ip-${portal}:3260-iscsi-${domain}:ovz_${VEID}-lun-0"; then
+	echo "Timeout waiting for device to appear..."
+	iscsiadm -m node -T "${domain}:ovz_${VEID}" -p "${portal}" --logout || true
+	exit 3
+fi
+
+primarylun=$(echo "/dev/disk/by-path/ip-${portal}:3260-iscsi-${domain}:ovz_${VEID}-lun-0")
+
+umount "${VE_ROOT}" # umount the /vz/private/VEID -> /vz/root/VEID fs
+
+physicaldisk=$(readlink "${primarylun}" | sed 's!.*$/!!')
+blockdir="/sys/block/${physicaldisk}/queue/"
+
+echo "Setting ${blockdir}/scheduler=noop"
+if ! echo noop > ${blockdir}/scheduler; then
+	echo "Failed to set ${blockdir}/scheduler=noop"
+	mount -v -o ro -t tmpfs tmpfs "${VE_ROOT}" || true
+	iscsiadm -m node -T "${domain}:ovz_${VEID}" -p "${portal}" --logout || true
+	exit 4
+fi
+
+echo "Setting ${blockdir}/max_sectors_kb=16384"
+if ! echo 16384 > ${blockdir}/max_sectors_kb; then
+	echo "Failed to set ${blockdir}/max_sectors_kb=16384"
+	mount -v -o ro -t tmpfs tmpfs "${VE_ROOT}" || true
+	iscsiadm -m node -T "${domain}:ovz_${VEID}" -p "${portal}" --logout || true	
+	exit 5
+fi
+
+echo "Setting ${blockdir}/nr_requests=1024"
+if ! echo 1024 > ${blockdir}/nr_requests; then
+	echo "Failed to set ${blockdir}/nr_requests=1024"
+	mount -v -o ro -t tmpfs tmpfs "${VE_ROOT}" || true
+	iscsiadm -m node -T "${domain}:ovz_${VEID}" -p "${portal}" --logout || true
+	exit 6
+fi
+
+echo "Setting read-ahead=1024 on ${physicaldisk} from ${primarylun}"
+if ! blockdev --setra 1024 "${primarylun}"; then
+	echo "Failed to set read-ahead on ${primarylun}"
+	mount -v -o ro -t tmpfs tmpfs "${VE_ROOT}" || true
+	iscsiadm -m node -T "${domain}:ovz_${VEID}" -p "${portal}" --logout || true
+	exit 7
+fi
+
+echo "Mounting ${VE_ROOT}"
+# if ! mount -v -t ext4 -o noatime,nodiratime,barrier=1,errors=remount-ro,data=journal,commit=60,discard "${primarylun}" "${VE_ROOT}"; then
+if ! mount -v -t ext4 -o noatime,nodiratime,errors=remount-ro "${primarylun}" "${VE_ROOT}"; then
+	echo "Failed to mount filesystem on ${VE_ROOT}"
+	mount -v -o ro -t tmpfs tmpfs "${VE_ROOT}" || true
+	iscsiadm -m node -T "${domain}:ovz_${VEID}" -p "${portal}" --logout || true
+	exit 8
+fi
+
+echo "Finding and mounting open NFS shares ..."
+for storage in 10.215.128.254 10.215.128.253 10.215.128.252; do
+	showmount --exports --no-headers "${storage}" | awk '$2 == "10.144.244.0,10.215.128.0,10.250.0.0" || $2 == "10.144.244.0,10.215.128.0,10.250.0.0,0.0.0.0" || $2 == "10.215.128.0,10.250.0.0" || $2 == "10.215.128.0,10.250.0.0,0.0.0.0" {print $1}' | while read mntpath; do
+		echo "... ${storage}:${mntpath}"
+		mkdir -p "${VE_ROOT}${mntpath}" || true
+		mount -t nfs4 "${storage}:${mntpath}" "${VE_ROOT}${mntpath}" || true
+	done
+done
+
+echo "iSCSI mount done"

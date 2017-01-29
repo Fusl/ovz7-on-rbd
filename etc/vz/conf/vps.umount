@@ -1,10 +1,14 @@
-#!/bin/bash -e
+#!/usr/bin/env bash
 
-[ -f /etc/vz/vz.conf ] || exit 1
-[ -f "${VE_CONFFILE}" ] || exit 1
-. /etc/vz/vz.conf
+set -e
+
+[ -f "/etc/vz/vz.conf"  ] || exit 1
+[ -f "${VE_CONFFILE}"   ] || exit 1
+[ -f "/etc/vz/rbd.conf" ] || exit 1
+. "/etc/vz/vz.conf"
 . "${VE_CONFFILE}"
+. "/etc/vz/rbd.conf"
 
 findmnt -lnR -o target "${VE_ROOT}" | tail -n +2 | tac | xargs --no-run-if-empty umount
 umount -v "${VE_ROOT}" && mount -v -o ro -t tmpfs tmpfs "${VE_ROOT}"
-iscsiadm -m node -T "iqn.2015-01.ws.fuslvz:ovz_${VEID}" -p 10.144.244.2 --logout
+rbd unmap "/dev/rbd/${RBDPOOL}/ve-${VEID}"

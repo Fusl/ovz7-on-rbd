@@ -14,7 +14,12 @@ if [ "x${hostname}" != "x${newhostname}" ]; then
 	echo "${hostname} to ${newhostname}"
 fi
 
-template="debian-8.0-x86_64-minimal"
+template="${1}"
+if [ "x${template}" == "x" ]; then
+	template="debian-8.0-x86_64-minimal"
+fi
+
+distribution=$(echo -n "${template}" | cut -d- -f1)
 
 veid=$(uuidgen -r)
 ipaddr=$(grep -vE '^#' /etc/vz/iplist | shuf | while read ip; do vzlist -aHoip | sed -r 's/(.*)/~\1~/' | grep -Fq "~${ip}~" || echo "${ip}"; done | head -n 1)
@@ -52,12 +57,12 @@ VEFSTYPE="simfs"
 DISK_QUOTA="no"
 IP_ADDRESS="${ipaddr}/255.255.255.255"
 HOSTNAME="${hostname}"
-NAME="${name}"
+NAME="${hostname}"
 VE_ROOT="/vz/root/\$VEID"
 VE_PRIVATE="/vz/private/\$VEID"
 TECHNOLOGIES="x86_64 nptl"
-DISTRIBUTION="debian"
-OSRELEASE="3.16.0"
+DISTRIBUTION="${distribution}"
+ONBOOT="yes"
 VEID="${veid}"
 UUID="${veid}"
 EOF

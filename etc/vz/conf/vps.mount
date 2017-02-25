@@ -9,6 +9,11 @@ set -e
 . "${VE_CONFFILE}"
 . "/etc/vz/rbd.conf"
 
+if test "${VEID:0:24}" "==" "00000000-0000-4000-0000-" || test "${UUID:0:24}" "==" "00000000-0000-4000-0000-" || test -z "${UUID}"; then
+	echo "Not a real container, skipping RBD mount..."
+	exit 0
+fi
+
 if test -e "${RBDPATH}"; then
 	echo "RBD device already exists at devmap location: ${RBDPATH} - Unmapping..."
 	if ! rbd unmap "${RBDPATH}"; then
@@ -38,21 +43,13 @@ fi
 physicaldisk=$(readlink "${RBDPATH}" | sed 's!.*/!!')
 blockdir="/sys/block/${physicaldisk}/queue/"
 
-echo "Setting read-ahead=1024 on ${RBDPATH}"
-if ! blockdev --setra 1024 "${RBDPATH}"; then
-	echo "Failed to set read-ahead on ${RBDPATH}"
-	mount -v -o ro -t tmpfs tmpfs "${VE_ROOT}" || true
-	rbd unmap "${RBDPATH}"
-	exit 6
-fi
-
 echo "Checking/Repairing filesystem"
 if ! fsck.ext4 -yf "${RBDPATH}"; then
 	echo "Re-checking filesystem"
 	if ! fsck.ext4 -nf "${RBDPATH}"; then
 		mount -v -o ro -t tmpfs tmpfs "${VE_ROOT}" || true
 		rbd unmap "${RBDPATH}"
-		exit 7
+		exit 6
 	fi
 fi
 
@@ -61,7 +58,16 @@ if ! mount -v -t ext4 -o noatime,nodiratime,errors=remount-ro,discard "${RBDPATH
 	echo "Failed to mount filesystem on ${VE_ROOT}"
 	mount -v -o ro -t tmpfs tmpfs "${VE_ROOT}" || true
 	rbd unmap "${RBDPATH}"
-	exit 8
+	exit 7
 fi
+
+echo "Finding and mounting open NFS shares ..."
+for storage in ${NFS_ENDPOINTS}; do
+	showmount --exports --no-headers "${storage}" | awk '{print $1}' | while read mntpath; do
+		echo "... ${storage}:${mntpath}"
+		mkdir -p "${VE_ROOT}${mntpath}"
+		mount -t nfs4 "${storage}:${mntpath}" "${VE_ROOT}${mntpath}" || true
+	done
+done
 
 echo "RBD mount done"

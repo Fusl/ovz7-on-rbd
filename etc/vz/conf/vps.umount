@@ -9,6 +9,11 @@ set -e
 . "${VE_CONFFILE}"
 . "/etc/vz/rbd.conf"
 
+if test "${VEID:0:24}" "==" "00000000-0000-4000-0000-" || test "${UUID:0:24}" "==" "00000000-0000-4000-0000-" || test -z "${UUID}"; then
+	echo "Not a real container, skipping RBD un-mount..."
+	exit 0
+fi
+
 findmnt -lnR -o target "${VE_ROOT}" | tail -n +2 | tac | xargs --no-run-if-empty umount
 umount -v "${VE_ROOT}" && mount -v -o ro -t tmpfs tmpfs "${VE_ROOT}"
 rbd unmap "/dev/rbd/${RBDPOOL}/ve-${VEID}"
